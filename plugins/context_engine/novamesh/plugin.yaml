@@ -1,0 +1,7 @@
+name: novamesh
+description: >
+  NovaMesh context engine — injects live fleet state, PC issue assignments,
+  and cross-agent coordination context into every agent turn. Wraps the
+  built-in compressor for token management.
+version: 0.1.0
+author: KK (Kenon)
