@@ -6240,6 +6240,19 @@ class AIAgent:
             }
         if self.tools:
             api_kwargs["tools"] = self.tools
+            # TeamADAPT fix: Qwen3-Next-Instruct (and other local Qwen3)
+            # models opt out of tool calls when tool_choice="auto" (the
+            # default) even with explicit instructions to use tools. Use
+            # HERMES_FORCE_TOOL_CHOICE env var at session launch to control:
+            #   required  — model MUST call a tool (use for heartbeat wake
+            #               sessions where the whole point is tool use;
+            #               WILL hang on no-tool-needed prompts)
+            #   auto      — stock OpenAI auto behavior (model decides)
+            #   none      — disable tools entirely
+            # When unset, behavior is stock (auto).
+            _force = os.getenv("HERMES_FORCE_TOOL_CHOICE", "").strip().lower()
+            if _force in ("required", "auto", "none"):
+                api_kwargs["tool_choice"] = _force
 
         if self.max_tokens is not None:
             api_kwargs.update(self._max_tokens_param(self.max_tokens))
