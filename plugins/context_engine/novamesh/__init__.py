@@ -274,26 +274,29 @@ class NovaMeshContextEngine(ContextEngine):
             except Exception:
                 services["vLLM"] = "DOWN"
 
-            # Temporal
+            # Temporal (HTTP API on :7243)
             try:
-                temporal_req = urllib.request.Request("http://127.0.0.1:7243/health")
+                temporal_req = urllib.request.Request("http://127.0.0.1:7243/api/v1/namespaces")
                 with urllib.request.urlopen(temporal_req, timeout=2):
                     services["Temporal"] = "UP"
             except Exception:
                 services["Temporal"] = "DOWN"
 
-            # Dragonfly (we're already connected if we got here)
+            # Dragonfly
             try:
                 r.ping()
                 services["Dragonfly"] = "UP"
             except Exception:
                 services["Dragonfly"] = "DOWN"
 
-            # NATS
+            # NATS (client port :4222 — monitor :8222 can hang)
+            import socket
             try:
-                nats_req = urllib.request.Request("http://127.0.0.1:8222/varz")
-                with urllib.request.urlopen(nats_req, timeout=2):
-                    services["NATS"] = "UP"
+                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                s.settimeout(1)
+                s.connect(("127.0.0.1", 4222))
+                s.close()
+                services["NATS"] = "UP"
             except Exception:
                 services["NATS"] = "DOWN"
 
