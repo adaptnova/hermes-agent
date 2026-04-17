@@ -398,6 +398,27 @@ async def _debug_workflow(args: dict) -> str:
         return json.dumps({"error": f"Failed to debug workflow: {e}"})
 
 
+async def _validate_worker(args: dict) -> str:
+    """Validate a worker on a given task queue."""
+    client = await _get_client()
+    task_queue = args.get("task_queue", TASK_QUEUE)
+    check_capabilities = args.get("check_capabilities", True)
+
+    wf_id = f"validate-{task_queue}-{uuid.uuid4().hex[:6]}"
+    handle = await client.start_workflow(
+        "WorkerValidationWorkflow",
+        {"task_queue": task_queue, "check_capabilities": check_capabilities},
+        id=wf_id,
+        task_queue=TASK_QUEUE,
+    )
+
+    try:
+        result = await asyncio.wait_for(handle.result(), timeout=30)
+        return json.dumps(result, default=str)
+    except asyncio.TimeoutError:
+        return json.dumps({"workflow_id": wf_id, "status": "timeout", "worker_alive": False})
+
+
 async def _batch_submit(args: dict) -> str:
     """Submit multiple workflows from a manifest."""
     client = await _get_client()
@@ -477,6 +498,7 @@ ACTIONS = {
     "debug_workflow": _debug_workflow,
     "cancel_workflow": _cancel_workflow,
     "batch_submit": _batch_submit,
+    "validate_worker": _validate_worker,
 }
 
 
@@ -542,6 +564,7 @@ TEMPORAL_SUBMIT_SCHEMA = {
                     "submit_health_check", "submit_pipeline",
                     "query_workflow", "query_semaphore", "list_workflows",
                     "debug_workflow", "cancel_workflow", "batch_submit",
+                    "validate_worker",
                 ],
                 "description": "Which action to perform",
             },
