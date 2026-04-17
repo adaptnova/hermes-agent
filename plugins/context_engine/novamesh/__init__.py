@@ -263,49 +263,25 @@ class NovaMeshContextEngine(ContextEngine):
                 socket_connect_timeout=2,
             )
 
-            # Check key services via simple probes
-            services = {}
+            # Read from FleetHealthCheckWorkflow's cached state in Dragonfly
+            raw = r.get("novamesh:fleet:health")
+            if raw:
+                state = json.loads(raw)
+                lines = ["### Fleet Health"]
+                for svc in state.get("services", []):
+                    name = svc.get("name", "?")
+                    status = svc.get("status", "?")
+                    latency = svc.get("latency_ms", 0)
+                    indicator = "green" if status == "up" else "RED"
+                    lines.append(f"- **{name}**: {indicator} ({latency:.0f}ms)")
+                checked = state.get("checked_at", "")[:19]
+                if checked:
+                    lines.append(f"- *checked: {checked}*")
+                result = "\n".join(lines)
+            else:
+                # Fallback: direct probe if health workflow hasn't run yet
+                result = "### Fleet Health\n- *no health data (workflow not yet fired)*"
 
-            # vLLM
-            try:
-                vllm_req = urllib.request.Request("http://127.0.0.1:10001/health")
-                with urllib.request.urlopen(vllm_req, timeout=2):
-                    services["vLLM"] = "UP"
-            except Exception:
-                services["vLLM"] = "DOWN"
-
-            # Temporal (HTTP API on :7243)
-            try:
-                temporal_req = urllib.request.Request("http://127.0.0.1:7243/api/v1/namespaces")
-                with urllib.request.urlopen(temporal_req, timeout=2):
-                    services["Temporal"] = "UP"
-            except Exception:
-                services["Temporal"] = "DOWN"
-
-            # Dragonfly
-            try:
-                r.ping()
-                services["Dragonfly"] = "UP"
-            except Exception:
-                services["Dragonfly"] = "DOWN"
-
-            # NATS (client port :4222 — monitor :8222 can hang)
-            import socket
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                s.settimeout(1)
-                s.connect(("127.0.0.1", 4222))
-                s.close()
-                services["NATS"] = "UP"
-            except Exception:
-                services["NATS"] = "DOWN"
-
-            lines = ["### Fleet Health"]
-            for svc, status in services.items():
-                indicator = "green" if status == "UP" else "RED"
-                lines.append(f"- **{svc}**: {indicator}")
-
-            result = "\n".join(lines)
             self._fleet_cache = result
             self._fleet_cache_ts = now
             return result
