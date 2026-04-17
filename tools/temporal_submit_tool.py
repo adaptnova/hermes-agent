@@ -319,6 +319,85 @@ async def _submit_pipeline(args: dict) -> str:
     })
 
 
+async def _debug_workflow(args: dict) -> str:
+    """Fetch and format workflow event history as a step-by-step replay."""
+    client = await _get_client()
+    workflow_id = args.get("workflow_id", "")
+
+    if not workflow_id:
+        return json.dumps({"error": "workflow_id is required"})
+
+    handle = client.get_workflow_handle(workflow_id)
+
+    try:
+        desc = await handle.describe()
+        history = await handle.fetch_history()
+
+        steps = []
+        for event in history.events:
+            event_type = event.event_type
+            event_time = str(event.event_time) if event.event_time else "?"
+            step = {"event_type": event_type, "time": event_time[:19]}
+
+            # Extract useful details from common event types
+            if hasattr(event, "activity_task_scheduled_event_attributes"):
+                attrs = event.activity_task_scheduled_event_attributes
+                if attrs:
+                    step["activity_type"] = attrs.activity_type.name if attrs.activity_type else "?"
+                    step["detail"] = "scheduled"
+
+            if hasattr(event, "activity_task_completed_event_attributes"):
+                attrs = event.activity_task_completed_event_attributes
+                if attrs and attrs.result and attrs.result.payloads:
+                    try:
+                        result_data = json.loads(attrs.result.payloads[0].data)
+                        if isinstance(result_data, dict):
+                            step["result_preview"] = str(result_data)[:200]
+                        else:
+                            step["result_preview"] = str(result_data)[:200]
+                    except Exception:
+                        step["result_preview"] = "(binary)"
+                    step["detail"] = "completed"
+
+            if hasattr(event, "activity_task_failed_event_attributes"):
+                attrs = event.activity_task_failed_event_attributes
+                if attrs and attrs.failure:
+                    step["error"] = attrs.failure.message[:200] if attrs.failure.message else "unknown"
+                    step["detail"] = "failed"
+
+            if hasattr(event, "child_workflow_execution_started_event_attributes"):
+                attrs = event.child_workflow_execution_started_event_attributes
+                if attrs:
+                    step["child_workflow_type"] = attrs.workflow_type.name if attrs.workflow_type else "?"
+                    step["detail"] = "child_started"
+
+            if hasattr(event, "child_workflow_execution_completed_event_attributes"):
+                step["detail"] = "child_completed"
+
+            if hasattr(event, "child_workflow_execution_failed_event_attributes"):
+                step["detail"] = "child_failed"
+
+            steps.append(step)
+
+        # Filter to interesting events only
+        interesting = [s for s in steps if s.get("detail") or s.get("error")]
+        if not interesting:
+            interesting = steps[:20]  # fallback: first 20 raw events
+
+        return json.dumps({
+            "workflow_id": workflow_id,
+            "workflow_type": desc.workflow_type,
+            "status": desc.status.name,
+            "start_time": str(desc.start_time)[:19] if desc.start_time else None,
+            "close_time": str(desc.close_time)[:19] if desc.close_time else None,
+            "total_events": len(steps),
+            "steps": interesting[:30],  # cap at 30 to fit context
+        }, default=str)
+
+    except Exception as e:
+        return json.dumps({"error": f"Failed to debug workflow: {e}"})
+
+
 ACTIONS = {
     "submit_dispatch": _submit_multi_agent_dispatch,
     "submit_dag": _submit_dag_dispatch,
@@ -328,6 +407,7 @@ ACTIONS = {
     "query_workflow": _query_workflow,
     "query_semaphore": _query_semaphore,
     "list_workflows": _list_workflows,
+    "debug_workflow": _debug_workflow,
 }
 
 
@@ -392,6 +472,7 @@ TEMPORAL_SUBMIT_SCHEMA = {
                     "submit_dispatch", "submit_dag", "submit_work_loop",
                     "submit_health_check", "submit_pipeline",
                     "query_workflow", "query_semaphore", "list_workflows",
+                    "debug_workflow",
                 ],
                 "description": "Which action to perform",
             },
