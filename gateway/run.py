@@ -3555,16 +3555,32 @@ class GatewayRunner:
             }
             await self.hooks.emit("agent:start", hook_ctx)
 
-            # Run the agent
-            agent_result = await self._run_agent(
-                message=message_text,
-                context_prompt=context_prompt,
-                history=history,
-                source=source,
-                session_id=session_entry.session_id,
-                session_key=session_key,
-                event_message_id=event.message_id,
-            )
+            # Run the agent — optionally via Temporal for durable execution
+            _use_temporal = False
+            try:
+                from gateway.temporal_dispatch import is_temporal_enabled, temporal_run_conversation
+                _use_temporal = is_temporal_enabled()
+            except ImportError:
+                pass
+
+            if _use_temporal:
+                agent_result = await temporal_run_conversation(
+                    user_message=message_text,
+                    task_id=session_entry.session_id,
+                    timeout_seconds=900,
+                    metadata={"platform": source.platform.value if hasattr(source.platform, 'value') else str(source.platform),
+                              "chat_id": source.chat_id},
+                )
+            else:
+                agent_result = await self._run_agent(
+                    message=message_text,
+                    context_prompt=context_prompt,
+                    history=history,
+                    source=source,
+                    session_id=session_entry.session_id,
+                    session_key=session_key,
+                    event_message_id=event.message_id,
+                )
 
             # Stop persistent typing indicator now that the agent is done
             try:
