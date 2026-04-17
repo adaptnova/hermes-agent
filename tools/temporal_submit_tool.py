@@ -287,11 +287,44 @@ async def _list_workflows(args: dict) -> str:
 
 # ── Main dispatch ──────────────────────────────────────────────────────
 
+async def _submit_pipeline(args: dict) -> str:
+    """Submit a PipelineWorkflow."""
+    client = await _get_client()
+
+    spec = {
+        "name": args.get("name", "Unnamed pipeline"),
+        "company_id": _resolve_company_id(args.get("company", "")),
+        "stages": args.get("stages", []),
+        "parent_issue_id": args.get("parent_issue_id"),
+        "metadata": args.get("metadata", {}),
+    }
+
+    if not spec["stages"]:
+        return json.dumps({"error": "stages list is required"})
+
+    wf_id = f"pipeline-{uuid.uuid4().hex[:8]}"
+    handle = await client.start_workflow(
+        "PipelineWorkflow",
+        spec,
+        id=wf_id,
+        task_queue=TASK_QUEUE,
+    )
+
+    return json.dumps({
+        "status": "submitted",
+        "workflow_id": wf_id,
+        "workflow_type": "PipelineWorkflow",
+        "name": spec["name"],
+        "stages": len(spec["stages"]),
+    })
+
+
 ACTIONS = {
     "submit_dispatch": _submit_multi_agent_dispatch,
     "submit_dag": _submit_dag_dispatch,
     "submit_work_loop": _submit_agent_work_loop,
     "submit_health_check": _submit_health_check,
+    "submit_pipeline": _submit_pipeline,
     "query_workflow": _query_workflow,
     "query_semaphore": _query_semaphore,
     "list_workflows": _list_workflows,
@@ -357,8 +390,8 @@ TEMPORAL_SUBMIT_SCHEMA = {
                 "type": "string",
                 "enum": [
                     "submit_dispatch", "submit_dag", "submit_work_loop",
-                    "submit_health_check", "query_workflow",
-                    "query_semaphore", "list_workflows",
+                    "submit_health_check", "submit_pipeline",
+                    "query_workflow", "query_semaphore", "list_workflows",
                 ],
                 "description": "Which action to perform",
             },
