@@ -203,6 +203,12 @@ class NovaMeshContextEngine(ContextEngine):
             comms_block = self._get_recent_comms()
             if comms_block and len(comms_block) < budget:
                 parts.append(comms_block)
+                budget -= len(comms_block)
+
+        # Active Temporal workflows
+        workflows_block = self._get_active_workflows()
+        if workflows_block and len(workflows_block) < budget:
+            parts.append(workflows_block)
 
         if not parts:
             return ""
@@ -312,6 +318,35 @@ class NovaMeshContextEngine(ContextEngine):
             return "\n".join(lines)
         except Exception as e:
             logger.debug("Failed to read comms: %s", e)
+            return ""
+
+    def _get_active_workflows(self) -> str:
+        """Pull active workflow counts from the Temporal gateway."""
+        try:
+            req = urllib.request.Request("http://127.0.0.1:8090/dashboard")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                data = json.loads(resp.read())
+
+            active = data.get("active_workflows", {})
+            total = data.get("active_total", 0)
+            if total == 0:
+                return ""
+
+            lines = [f"### Active Workflows ({total})"]
+            for wt, cnt in active.items():
+                short = wt.replace("Workflow", "")
+                lines.append(f"- **{short}**: {cnt}")
+
+            sem = data.get("semaphore", {})
+            if sem.get("resource"):
+                lines.append(
+                    f"- vLLM semaphore: {sem.get('active_grants', 0)}/{sem.get('max_concurrent', '?')} "
+                    f"slots, {sem.get('queue_depth', 0)} queued"
+                )
+
+            return "\n".join(lines)
+        except Exception as e:
+            logger.debug("Failed to get workflow state: %s", e)
             return ""
 
     def _get_fleet_state_json(self) -> str:
