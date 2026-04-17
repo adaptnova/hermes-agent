@@ -394,6 +394,7 @@ class APIServerAdapter(BasePlatformAdapter):
         # Creation timestamps for orphaned-run TTL sweep
         self._run_streams_created: Dict[str, float] = {}
         self._session_db: Optional[Any] = None  # Lazy-init SessionDB for session continuity
+        self._temporal_handler: Any = None  # Lazy-init Temporal signal handler
 
     @staticmethod
     def _parse_cors_origins(value: Any) -> tuple[str, ...]:
@@ -755,7 +756,7 @@ class APIServerAdapter(BasePlatformAdapter):
 
         # Non-streaming: run the agent (with optional Idempotency-Key)
         async def _compute_completion():
-            return await self._run_agent(
+            return await self._run_via_temporal(
                 user_message=user_message,
                 conversation_history=history,
                 ephemeral_system_prompt=system_prompt,
@@ -1039,7 +1040,7 @@ class APIServerAdapter(BasePlatformAdapter):
         session_id = str(uuid.uuid4())
 
         async def _compute_response():
-            return await self._run_agent(
+            return await self._run_via_temporal(
                 user_message=user_message,
                 conversation_history=conversation_history,
                 ephemeral_system_prompt=instructions,
@@ -1401,6 +1402,126 @@ class APIServerAdapter(BasePlatformAdapter):
             return web.json_response({"error": str(e)}, status=500)
 
     # ------------------------------------------------------------------
+    # Temporal signal handler integration (Phase 3)
+    # ------------------------------------------------------------------
+
+    def _get_temporal_signal_handler(self) -> Optional["GatewaySignalHandler"]:
+        """Return the cached Temporal signal handler, creating it on first use."""
+        if self._temporal_handler is None:
+            try:
+                from temporal.gateway_signal_handler import (
+                    GatewaySignalHandler,
+                    WorkflowState,
+                )
+
+                self._temporal_handler = GatewaySignalHandler(
+                    workflow_namespace=os.environ.get("TEMPORAL_NAMESPACE", "novamesh"),
+                    task_queue=os.environ.get("TEMPORAL_TASK_QUEUE", "novamesh"),
+                )
+                logger.info("[api_server] Temporal signal handler initialised")
+            except Exception as exc:
+                logger.debug("[api_server] Temporal handler unavailable: %s", exc)
+                self._temporal_handler = object()  # sentinel for failed init
+        if isinstance(self._temporal_handler, type(self)):
+            return self._temporal_handler
+        return None
+
+    async def _run_via_temporal(
+        self,
+        user_message: str,
+        conversation_history: List[Dict[str, str]],
+        ephemeral_system_prompt: Optional[str] = None,
+        session_id: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
+        fingerprint_keys: Optional[List[str]] = None,
+        request_body: Optional[Dict[str, Any]] = None,
+    ) -> tuple:
+        """Execute agent run through Temporal workflow → signal → activity.
+
+        This implements Phase 3 of the Temporal integration requirements:
+        * Platform message → Temporal workflow signal → Temporal activity
+          → AIAgent.run_conversation() → Temporal handles retries, timeouts,
+          cross-server coordination.
+
+        If the Temporal server is unreachable the call falls back to the
+        existing direct _run_agent() path so the API server remains fully
+        functional.
+        """
+        # --- Try the Temporal path first ---
+        handler = self._get_temporal_signal_handler()
+        if handler is None:
+            logger.debug(
+                "[api_server] Temporal signal handler not available; "
+                "falling back to direct agent run"
+            )
+            return await self._run_agent(
+                user_message=user_message,
+                conversation_history=conversation_history,
+                ephemeral_system_prompt=ephemeral_system_prompt,
+                session_id=session_id,
+            )
+
+        # Build APIMessageInput for the Temporal layer
+        try:
+            from temporal.api_server_integration import (
+                APIMessageInput,
+                trigger_workflow_via_temporal,
+            )
+        except ImportError:
+            logger.debug("[api_server] temporal.api_server_integration not importable; "
+                         "falling back to direct agent run")
+            return await self._run_agent(
+                user_message=user_message,
+                conversation_history=conversation_history,
+                ephemeral_system_prompt=ephemeral_system_prompt,
+                session_id=session_id,
+            )
+
+        api_input = APIMessageInput(
+            user_message=user_message,
+            conversation_history=list(conversation_history),
+            ephemeral_system_prompt=ephemeral_system_prompt,
+            session_id=session_id or str(uuid.uuid4()),
+            metadata={"idempotency_key": idempotency_key} if idempotency_key else {},
+        )
+
+        # Idempotency — skip the Temporal wrapper and go straight to the
+        # cache when the key is present so the semantics stay identical to
+        # the pre-integration code path.
+        if idempotency_key and request_body and fingerprint_keys:
+            fp = _make_request_fingerprint(request_body, keys=fingerprint_keys)
+            try:
+                result, usage = await _idem_cache.get_or_set(
+                    idempotency_key, fp,
+                    lambda: trigger_workflow_via_temporal(api_input, self._run_agent),
+                )
+                return result, usage
+            except Exception as exc:
+                logger.warning(
+                    "[api_server] Temporal idempotency cache miss; retrying directly: %s",
+                    exc,
+                )
+
+        # Direct Temporal trigger (no idempotency wrapper)
+        try:
+            result, usage = await trigger_workflow_via_temporal(
+                api_input, self._run_agent
+            )
+        except Exception as exc:
+            logger.warning(
+                "[api_server] Temporal workflow failed, falling back to direct: %s",
+                exc,
+            )
+            return await self._run_agent(
+                user_message=user_message,
+                conversation_history=conversation_history,
+                ephemeral_system_prompt=ephemeral_system_prompt,
+                session_id=session_id,
+            )
+
+        return result, usage
+
+    # ------------------------------------------------------------------
     # Output extraction helper
     # ------------------------------------------------------------------
 
@@ -1477,6 +1598,29 @@ class APIServerAdapter(BasePlatformAdapter):
         callers (e.g. the SSE writer) to call ``agent.interrupt()`` from
         another thread to stop in-progress LLM calls.
         """
+        # Optionally route through Temporal for durable API execution
+        _use_temporal_api = False
+        try:
+            from gateway.temporal_api_adapter import is_temporal_api_enabled, temporal_api_submit
+            _use_temporal_api = is_temporal_api_enabled()
+        except ImportError:
+            pass
+
+        if _use_temporal_api:
+            messages_for_temporal = conversation_history or []
+            messages_for_temporal.append({"role": "user", "content": user_message})
+            temporal_result = await temporal_api_submit(
+                messages=messages_for_temporal,
+                session_id=session_id or "default",
+                timeout_seconds=900,
+            )
+            result = {
+                "final_response": temporal_result.get("choices", [{}])[0].get("message", {}).get("content", ""),
+                "messages": [],
+            }
+            usage = temporal_result.get("usage", {})
+            return result, usage
+
         loop = asyncio.get_event_loop()
 
         def _run():
