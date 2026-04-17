@@ -398,6 +398,40 @@ async def _debug_workflow(args: dict) -> str:
         return json.dumps({"error": f"Failed to debug workflow: {e}"})
 
 
+async def _cancel_workflow(args: dict) -> str:
+    """Cancel/terminate a running workflow."""
+    client = await _get_client()
+    workflow_id = args.get("workflow_id", "")
+    reason = args.get("reason", "Cancelled via temporal_submit tool")
+
+    if not workflow_id:
+        return json.dumps({"error": "workflow_id is required"})
+
+    handle = client.get_workflow_handle(workflow_id)
+    try:
+        await handle.cancel()
+        return json.dumps({
+            "workflow_id": workflow_id,
+            "status": "cancelled",
+            "reason": reason,
+        })
+    except Exception as e:
+        # Try terminate if cancel fails
+        try:
+            await handle.terminate(reason)
+            return json.dumps({
+                "workflow_id": workflow_id,
+                "status": "terminated",
+                "reason": reason,
+            })
+        except Exception as e2:
+            return json.dumps({
+                "workflow_id": workflow_id,
+                "status": "error",
+                "error": str(e2),
+            })
+
+
 ACTIONS = {
     "submit_dispatch": _submit_multi_agent_dispatch,
     "submit_dag": _submit_dag_dispatch,
@@ -408,6 +442,7 @@ ACTIONS = {
     "query_semaphore": _query_semaphore,
     "list_workflows": _list_workflows,
     "debug_workflow": _debug_workflow,
+    "cancel_workflow": _cancel_workflow,
 }
 
 
@@ -472,7 +507,7 @@ TEMPORAL_SUBMIT_SCHEMA = {
                     "submit_dispatch", "submit_dag", "submit_work_loop",
                     "submit_health_check", "submit_pipeline",
                     "query_workflow", "query_semaphore", "list_workflows",
-                    "debug_workflow",
+                    "debug_workflow", "cancel_workflow",
                 ],
                 "description": "Which action to perform",
             },
