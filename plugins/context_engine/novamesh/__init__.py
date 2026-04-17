@@ -209,6 +209,12 @@ class NovaMeshContextEngine(ContextEngine):
         workflows_block = self._get_active_workflows()
         if workflows_block and len(workflows_block) < budget:
             parts.append(workflows_block)
+            budget -= len(workflows_block)
+
+        # Workflow execution metrics
+        metrics_block = self._get_workflow_metrics_summary()
+        if metrics_block and len(metrics_block) < budget:
+            parts.append(metrics_block)
 
         if not parts:
             return ""
@@ -347,6 +353,41 @@ class NovaMeshContextEngine(ContextEngine):
             return "\n".join(lines)
         except Exception as e:
             logger.debug("Failed to get workflow state: %s", e)
+            return ""
+
+    def _get_workflow_metrics_summary(self) -> str:
+        """Pull workflow execution metrics from Dragonfly cache."""
+        try:
+            import redis
+            r = redis.Redis(
+                host=self._dragonfly_host,
+                port=self._dragonfly_port,
+                decode_responses=True,
+                socket_connect_timeout=2,
+            )
+            raw = r.get("novamesh:temporal:metrics")
+            if not raw:
+                return ""
+
+            data = json.loads(raw)
+            metrics = data.get("metrics", {})
+            if not metrics:
+                return ""
+
+            lines = ["### Workflow Metrics (24h)"]
+            for wf_type, m in metrics.items():
+                c = m.get("counts", {})
+                total = c.get("total", 0)
+                if total == 0:
+                    continue
+                short = wf_type.replace("Workflow", "")
+                rate = m.get("success_rate", 0)
+                avg = m.get("avg_duration_seconds", 0)
+                lines.append(f"- **{short}**: {total} runs, {rate:.0%} success, {avg:.0f}s avg")
+
+            return "\n".join(lines) if len(lines) > 1 else ""
+        except Exception as e:
+            logger.debug("Failed to get workflow metrics: %s", e)
             return ""
 
     def _get_fleet_state_json(self) -> str:
