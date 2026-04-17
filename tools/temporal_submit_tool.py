@@ -398,6 +398,39 @@ async def _debug_workflow(args: dict) -> str:
         return json.dumps({"error": f"Failed to debug workflow: {e}"})
 
 
+async def _batch_submit(args: dict) -> str:
+    """Submit multiple workflows from a manifest."""
+    client = await _get_client()
+    workflows = args.get("workflows", [])
+
+    if not workflows:
+        return json.dumps({"error": "workflows list is required"})
+
+    results = []
+    for i, wf_spec in enumerate(workflows):
+        action = wf_spec.get("action", "submit_dispatch")
+        handler = ACTIONS.get(action)
+        if not handler or action == "batch_submit":
+            results.append({"index": i, "status": "error", "error": f"invalid action: {action}"})
+            continue
+
+        try:
+            result_json = await handler(wf_spec)
+            result = json.loads(result_json)
+            result["index"] = i
+            results.append(result)
+        except Exception as e:
+            results.append({"index": i, "status": "error", "error": str(e)})
+
+    submitted = sum(1 for r in results if r.get("status") == "submitted")
+    return json.dumps({
+        "total": len(workflows),
+        "submitted": submitted,
+        "failed": len(workflows) - submitted,
+        "results": results,
+    })
+
+
 async def _cancel_workflow(args: dict) -> str:
     """Cancel/terminate a running workflow."""
     client = await _get_client()
@@ -443,6 +476,7 @@ ACTIONS = {
     "list_workflows": _list_workflows,
     "debug_workflow": _debug_workflow,
     "cancel_workflow": _cancel_workflow,
+    "batch_submit": _batch_submit,
 }
 
 
@@ -507,7 +541,7 @@ TEMPORAL_SUBMIT_SCHEMA = {
                     "submit_dispatch", "submit_dag", "submit_work_loop",
                     "submit_health_check", "submit_pipeline",
                     "query_workflow", "query_semaphore", "list_workflows",
-                    "debug_workflow", "cancel_workflow",
+                    "debug_workflow", "cancel_workflow", "batch_submit",
                 ],
                 "description": "Which action to perform",
             },
