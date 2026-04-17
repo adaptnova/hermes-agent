@@ -944,6 +944,37 @@ def tick(verbose: bool = True, adapters=None, loop=None) -> int:
                 # One-shot jobs are left alone so they can retry on restart.
                 advance_next_run(job["id"])
 
+                # Optionally route through Temporal for durable execution
+                _temporal_cron = False
+                try:
+                    from cron.temporal_adapter import is_temporal_cron_enabled
+                    _temporal_cron = is_temporal_cron_enabled()
+                except ImportError:
+                    pass
+
+                if _temporal_cron:
+                    try:
+                        import asyncio as _cron_asyncio
+                        from cron.temporal_adapter import create_temporal_schedule
+                        _cron_loop = _cron_asyncio.new_event_loop()
+                        _sched_result = _cron_loop.run_until_complete(
+                            create_temporal_schedule(job["id"], job)
+                        )
+                        _cron_loop.close()
+                        logger.info(
+                            "Job %s routed to Temporal schedule: %s",
+                            job["id"], _sched_result.get("status"),
+                        )
+                        # Skip direct execution — Temporal handles it now
+                        mark_job_run(job["id"], True, None)
+                        executed += 1
+                        continue
+                    except Exception as _te:
+                        logger.warning(
+                            "Temporal cron dispatch failed for %s, falling back to direct: %s",
+                            job["id"], _te,
+                        )
+
                 success, output, final_response, error = run_job(job)
 
                 output_file = save_job_output(job["id"], output)
