@@ -308,6 +308,7 @@ class NovaMeshContextEngine(ContextEngine):
             r = redis.Redis(
                 host=self._dragonfly_host,
                 port=self._dragonfly_port,
+                password="Echovaeris1966!!",
                 decode_responses=True,
                 socket_connect_timeout=2,
             )
