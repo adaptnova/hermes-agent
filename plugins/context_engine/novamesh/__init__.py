@@ -92,9 +92,10 @@ class NovaMeshContextEngine(ContextEngine):
         self,
         messages: List[Dict[str, Any]],
         current_tokens: int = None,
+        **kwargs,
     ) -> List[Dict[str, Any]]:
         if self._compressor:
-            return self._compressor.compress(messages, current_tokens)
+            return self._compressor.compress(messages, current_tokens, **kwargs)
         return messages
 
     def should_compress_preflight(self, messages: List[Dict[str, Any]]) -> bool:
@@ -135,38 +136,10 @@ class NovaMeshContextEngine(ContextEngine):
     # -- Tools -------------------------------------------------------------
 
     def get_tool_schemas(self) -> List[Dict[str, Any]]:
-        return [
-            {
-                "type": "function",
-                "function": {
-                    "name": "novamesh_fleet_state",
-                    "description": (
-                        "Get live NovaMesh fleet state: active agents, service health "
-                        "(vLLM, Temporal, NATS, Dragonfly), and recent cross-agent activity."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "required": [],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "novamesh_my_issues",
-                    "description": (
-                        "Get current Paperclip issue assignments for this agent: "
-                        "todo, in_progress, blocked issues with titles and priorities."
-                    ),
-                    "parameters": {
-                        "type": "object",
-                        "properties": {},
-                        "required": [],
-                    },
-                },
-            },
-        ]
+        # Tools disabled — vLLM rejects the nested function schema format.
+        # Fleet state and issues are injected via context injection instead.
+        # The nats_comm and temporal_submit tools cover interactive queries.
+        return []
 
     def handle_tool_call(self, name: str, args: Dict[str, Any], **kwargs) -> str:
         if name == "novamesh_fleet_state":
