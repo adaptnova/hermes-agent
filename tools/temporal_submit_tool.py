@@ -398,6 +398,30 @@ async def _debug_workflow(args: dict) -> str:
         return json.dumps({"error": f"Failed to debug workflow: {e}"})
 
 
+async def _submit_crossbox(args: dict) -> str:
+    """Submit a CrossBoxDispatchWorkflow."""
+    client = await _get_client()
+    spec = {
+        "name": args.get("name", "Cross-box dispatch"),
+        "tasks": args.get("tasks", []),
+        "parallelism": args.get("parallelism", 3),
+    }
+    if not spec["tasks"]:
+        return json.dumps({"error": "tasks list is required"})
+
+    wf_id = f"crossbox-{uuid.uuid4().hex[:8]}"
+    handle = await client.start_workflow(
+        "CrossBoxDispatchWorkflow", spec, id=wf_id, task_queue=TASK_QUEUE,
+    )
+    return json.dumps({
+        "status": "submitted",
+        "workflow_id": wf_id,
+        "workflow_type": "CrossBoxDispatchWorkflow",
+        "name": spec["name"],
+        "tasks": len(spec["tasks"]),
+    })
+
+
 async def _validate_worker(args: dict) -> str:
     """Validate a worker on a given task queue."""
     client = await _get_client()
@@ -499,6 +523,7 @@ ACTIONS = {
     "cancel_workflow": _cancel_workflow,
     "batch_submit": _batch_submit,
     "validate_worker": _validate_worker,
+    "submit_crossbox": _submit_crossbox,
 }
 
 
@@ -564,7 +589,7 @@ TEMPORAL_SUBMIT_SCHEMA = {
                     "submit_health_check", "submit_pipeline",
                     "query_workflow", "query_semaphore", "list_workflows",
                     "debug_workflow", "cancel_workflow", "batch_submit",
-                    "validate_worker",
+                    "validate_worker", "submit_crossbox",
                 ],
                 "description": "Which action to perform",
             },
