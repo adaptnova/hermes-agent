@@ -47,9 +47,12 @@ async def _send_direct(args: dict) -> str:
     nc = await _get_nats()
     js = nc.jetstream()
 
+    msg_type = args.get("type", "direct")
+
     payload = {
         "from": sender,
         "to": to,
+        "type": msg_type,
         "subject": subject_line,
         "message": message,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -83,8 +86,11 @@ async def _post_project(args: dict) -> str:
     nc = await _get_nats()
     js = nc.jetstream()
 
+    msg_type = args.get("type", "broadcast")
+
     payload = {
         "from": sender,
+        "type": msg_type,
         "subject": subject_line,
         "message": message,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
