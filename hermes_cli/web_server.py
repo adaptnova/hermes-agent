@@ -2263,6 +2263,66 @@ async def get_usage_analytics(days: int = 30):
         db.close()
 
 
+# ── NovaMesh Temporal proxy ──────────────────────────────────────────
+# Proxies requests from the Hermes dashboard to the Temporal HTTP gateway
+# at :8090. This lets the web UI show workflow state without CORS issues.
+
+TEMPORAL_GATEWAY = os.environ.get("NOVAMESH_TEMPORAL_GATEWAY", "http://127.0.0.1:8090")
+
+@app.get("/api/temporal/dashboard")
+async def temporal_dashboard():
+    """Proxy to Temporal gateway /dashboard."""
+    try:
+        req = urllib.request.Request(f"{TEMPORAL_GATEWAY}/dashboard")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/api/temporal/health")
+async def temporal_health():
+    """Proxy to Temporal gateway /health."""
+    try:
+        req = urllib.request.Request(f"{TEMPORAL_GATEWAY}/health")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/api/temporal/fleet")
+async def temporal_fleet():
+    """Proxy to Temporal gateway /fleet."""
+    try:
+        req = urllib.request.Request(f"{TEMPORAL_GATEWAY}/fleet")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/api/temporal/workflows")
+async def temporal_workflows(limit: int = 20, status: str = None):
+    """Proxy to Temporal gateway /workflows."""
+    try:
+        url = f"{TEMPORAL_GATEWAY}/workflows?limit={limit}"
+        if status:
+            url += f"&status={status}"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        return {"error": str(e)}
+
+@app.get("/api/temporal/semaphore/{resource}")
+async def temporal_semaphore(resource: str = "vllm"):
+    """Proxy to Temporal gateway /semaphore."""
+    try:
+        req = urllib.request.Request(f"{TEMPORAL_GATEWAY}/semaphore/{resource}")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return json.loads(resp.read())
+    except Exception as e:
+        return {"error": str(e)}
+
+
 def mount_spa(application: FastAPI):
     """Mount the built SPA. Falls back to index.html for client-side routing.
 
