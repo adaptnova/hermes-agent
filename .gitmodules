@@ -1,9 +1,6 @@
 [submodule "tinker-atropos"]
 	path = tinker-atropos
 	url = https://github.com/nousresearch/tinker-atropos
-[submodule "tools/hermes-paperclip-adapter"]
-	path = tools/hermes-paperclip-adapter
-	url = https://github.com/NousResearch/hermes-paperclip-adapter.git
 [submodule "tools/hermes-agent-self-evolution"]
 	path = tools/hermes-agent-self-evolution
 	url = https://github.com/NousResearch/hermes-agent-self-evolution.git
